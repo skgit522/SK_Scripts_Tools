@@ -2,13 +2,13 @@
 
 set -Eeuo pipefail
 
-# Log all User Data output
+# Log User Data execution
 LOG_FILE="/var/log/ec2-user-data-setup.log"
 exec > >(tee -a "$LOG_FILE" | logger -t ec2-user-data -s 2>/dev/console) 2>&1
 
 export DEBIAN_FRONTEND=noninteractive
 
-echo "Starting Ubuntu EC2 initialization..."
+echo "Starting EC2 Ubuntu initialization..."
 
 # User Data runs as root
 if [[ "$EUID" -ne 0 ]]; then
@@ -20,14 +20,15 @@ fi
 apt-get update
 apt-get upgrade -y
 
-# Install required utilities
+# Install required packages and Nginx
 apt-get install -y \
     ca-certificates \
     curl \
     gnupg \
-    unzip
+    unzip \
+    nginx
 
-# Detect Ubuntu release information
+# Detect Ubuntu version and architecture
 source /etc/os-release
 
 UBUNTU_CODENAME="${UBUNTU_CODENAME:-${VERSION_CODENAME:-}}"
@@ -59,7 +60,7 @@ EOF
 # Refresh package metadata
 apt-get update
 
-# Install Docker Engine, Docker CLI, Compose and Buildx
+# Install Docker Engine, Docker CLI, Buildx and Docker Compose
 apt-get install -y \
     docker-ce \
     docker-ce-cli \
@@ -67,10 +68,10 @@ apt-get install -y \
     docker-buildx-plugin \
     docker-compose-plugin
 
-# Start Docker now and enable it after reboot
+# Start Docker and enable it after reboot
 systemctl enable --now docker
 
-# Add the default Ubuntu EC2 user to the Docker group
+# Add default Ubuntu user to Docker group
 if id ubuntu >/dev/null 2>&1; then
     usermod -aG docker ubuntu
 else
@@ -78,7 +79,11 @@ else
     exit 1
 fi
 
-# Detect CPU architecture for AWS CLI installation
+# Validate and start Nginx
+nginx -t
+systemctl enable --now nginx
+
+# Detect CPU architecture for AWS CLI
 case "$(uname -m)" in
     x86_64)
         AWS_CLI_ARCH="x86_64"
@@ -92,7 +97,7 @@ case "$(uname -m)" in
         ;;
 esac
 
-# Download and install the latest AWS CLI version 2
+# Download and install AWS CLI v2
 AWS_CLI_TEMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$AWS_CLI_TEMP_DIR"' EXIT
 
@@ -106,15 +111,20 @@ unzip -q \
 
 "${AWS_CLI_TEMP_DIR}/aws/install" --update
 
-# Verify Docker installation
+# Verify Docker
 docker --version
 docker compose version
 systemctl is-active --quiet docker
 
-# Verify AWS CLI installation
+# Verify Nginx
+nginx -v
+systemctl is-active --quiet nginx
+
+# Verify AWS CLI
 aws --version
 
 echo "Docker installation completed successfully."
 echo "Docker Compose installation completed successfully."
+echo "Nginx installation completed successfully."
 echo "AWS CLI installation completed successfully."
 echo "Ubuntu EC2 initialization completed."
